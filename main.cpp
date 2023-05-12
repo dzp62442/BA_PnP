@@ -1,5 +1,6 @@
 #include "Calibrator.hpp"
 #include "BAOptimizer.hpp"
+#include "Timer.hpp"
 
 int main ( int argc, char** argv )
 {
@@ -8,6 +9,7 @@ int main ( int argc, char** argv )
     calibrator.calib();
     cv::Mat K = calibrator.K.clone();
     BAOptimizer optimizer(K);
+    int gn_timer_ms = 0, lm_timer_ms = 0;  // 高斯牛顿法和LM算法总耗时
 
     // 对每张图像求解PnP问题
     for (int n=0; n<calibrator.num_images; n++){
@@ -28,8 +30,7 @@ int main ( int argc, char** argv )
         cv::cv2eigen(calibrator.tvecs[n], tvec_eigen);
         Sophus::SO3d rot = Sophus::SO3d::exp(rvec_eigen);
         Sophus::SE3d pose_cv(rot, tvec_eigen);  
-
-        std::cout << "Pose of opencv: \n" << pose_cv.matrix() << std::endl;
+        // std::cout << "Pose of opencv calib: \n" << pose_cv.matrix() << std::endl;
         calibrator.computeReprojectionErrors(n);  // 输出OpenCV标定重投影误差
 
         // 生成随机的初始相机位姿
@@ -38,12 +39,16 @@ int main ( int argc, char** argv )
         Eigen::Vector3d t = Eigen::Vector3d::Random();
         Sophus::SE3d pose_gn(q, t), pose_lm(q, t);
 
+        Timer timer;  // 初始化计时器
+
         // 高斯牛顿法优化
         optimizer.GaussNewton(points_3d_eigen, points_2d_eigen, pose_gn);
+        gn_timer_ms += timer.update("Gauss-Newton");
         // std::cout << "Pose by Gauss-Newton: \n" << pose_gn.matrix() << std::endl;
 
         // LM法优化
         optimizer.LevenbergMarquardt(points_3d_eigen, points_2d_eigen, pose_lm);
+        lm_timer_ms += timer.update("Levenberg-Marquardt");
         // std::cout << "Pose by Levenberg-Marquardt: \n" << pose_lm.matrix() << std::endl;
 
         // // DLT求解PnP问题
@@ -56,6 +61,8 @@ int main ( int argc, char** argv )
         // std::cout << "Pose by Gauss-Newton based on DLT: \n" << pose_dlt.matrix() << std::endl;
 
     }
-    
 
+    std::cout << "Gauss-Newton total time: " << gn_timer_ms << " ms" << std::endl;
+    std::cout << "Levenberg-Marquardt total time: " << lm_timer_ms << " ms" << std::endl;
+    
 }

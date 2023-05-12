@@ -91,10 +91,11 @@ public:
         std::cout << "Gauss-Newton--------------------------\n";
         const int iterations = 100;  // 迭代次数
         double cost = 0, lastCost = 0;
-        double eps = 1e-6;  // 迭代停止条件：当误差变化小于eps时停止迭代
+        double eps = 1e-3;  // 迭代停止条件：当误差变化小于eps时停止迭代
         
         // 高斯牛顿迭代
-        for (int iter=0; iter<iterations; iter++){
+        int iter;
+        for (iter=0; iter<iterations; iter++){
             Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();  // Hessian矩阵
             Eigen::Matrix<double, 6, 1> g = Eigen::Matrix<double, 6, 1>::Zero();  // 误差项
 
@@ -117,16 +118,14 @@ public:
             // 更新估计位姿
             pose = Sophus::SE3d::exp(dx) * pose;
             lastCost = cost;
-            std::cout << "iteration " << iter << " cost=" << std::setprecision(12) << cost << std::endl;
+            // std::cout << "iteration " << iter << " cost=" << std::setprecision(12) << cost << std::endl;
             
             if (dx.norm() < eps) {  // 更新量足够小，停止迭代
                 break;
             }
         }
 
-        std::cout << "Final total reprojection error of G-N: " << cost << std::endl;
-        std::cout << "Final average reprojection error of G-N: " << cost / points_2d.size()  << std::endl;
-
+        std::cout << "Final total and average error after " << iter << " iterations of G-N: " << cost << ", " << cost / points_2d.size() << std::endl;
     }
 
     // 针对BA求解PnP问题的LM法优化
@@ -135,10 +134,11 @@ public:
         const int iterations = 100;  // 迭代次数
         double cost = 0, lastCost = 0;
         double lambda = 10;  // 缩放系数
-        double eps = 1e-6;  // 迭代停止条件：当误差变化小于eps时停止迭代
+        double eps = 1e-3;  // 迭代停止条件：当误差变化小于eps时停止迭代
 
         // LM迭代
-        for (int iter=0; iter<iterations; iter++){
+        int iter;
+        for (iter=0; iter<iterations; iter++){
             Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();  // Hessian矩阵
             Eigen::Matrix<double, 6, 1> g = Eigen::Matrix<double, 6, 1>::Zero();  // 误差项
 
@@ -168,14 +168,17 @@ public:
                 lambda /= 2;
                 pose = pose_new;
                 lastCost = cost;
-                std::cout << "iteration " << iter << " cost=" << std::setprecision(12) << cost << std::endl;
+                // std::cout << "iteration " << iter << " cost=" << std::setprecision(12) << cost << std::endl;
             } else {
                 lambda *= 2;
             }
+            
+            if (dx.norm() < eps) {  // 更新量足够小，停止迭代
+                break;
+            }
         }
 
-        std::cout << "Final total reprojection error of LM: " << cost << std::endl;
-        std::cout << "Final average reprojection error of LM: " << cost / points_2d.size()  << std::endl;
+        std::cout << "Final total and average error after " << iter << " iterations of LM: " << cost << ", " << cost / points_2d.size() << std::endl;
 
     }
 
