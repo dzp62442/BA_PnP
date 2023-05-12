@@ -9,7 +9,7 @@ int main ( int argc, char** argv )
     calibrator.calib();
     cv::Mat K = calibrator.K.clone();
     BAOptimizer optimizer(K);
-    int gn_timer_ms = 0, lm_timer_ms = 0;  // 高斯牛顿法和LM算法总耗时
+    int gn_ms = 0, lm_ms = 0, gn_ceres_ms = 0, lm_ceres_ms = 0;  // 各种算法总耗时
 
     // 对每张图像求解PnP问题
     for (int n=0; n<calibrator.num_images; n++){
@@ -37,19 +37,30 @@ int main ( int argc, char** argv )
         Eigen::Quaterniond q = Eigen::Quaterniond::UnitRandom();
         q.normalize();
         Eigen::Vector3d t = Eigen::Vector3d::Random();
-        Sophus::SE3d pose_gn(q, t), pose_lm(q, t);
+        // Sophus::SE3d pose_gn(q, t), pose_lm(q, t), pose_gn_ceres(q, t), pose_lm_ceres(q, t);
+        Sophus::SE3d pose_gn(rot, tvec_eigen), pose_lm(rot, tvec_eigen), pose_gn_ceres(rot, tvec_eigen), pose_lm_ceres(rot, tvec_eigen);
 
         Timer timer;  // 初始化计时器
 
         // 高斯牛顿法优化
         optimizer.GaussNewton(points_3d_eigen, points_2d_eigen, pose_gn);
-        gn_timer_ms += timer.update("Gauss-Newton");
+        gn_ms += timer.update("Gauss-Newton");
         // std::cout << "Pose by Gauss-Newton: \n" << pose_gn.matrix() << std::endl;
 
-        // LM法优化
+        // LM 算法优化
         optimizer.LevenbergMarquardt(points_3d_eigen, points_2d_eigen, pose_lm);
-        lm_timer_ms += timer.update("Levenberg-Marquardt");
+        lm_ms += timer.update("Levenberg-Marquardt");
         // std::cout << "Pose by Levenberg-Marquardt: \n" << pose_lm.matrix() << std::endl;
+
+        // Ceres 的高斯牛顿法优化
+        optimizer.CeresSolver(points_3d_eigen, points_2d_eigen, pose_gn_ceres);
+        gn_ceres_ms += timer.update("Ceres Gauss-Newton");
+        // std::cout << "Pose by Ceres Gauss-Newton: \n" << pose_gn_ceres.matrix() << std::endl;
+
+        // Ceres 的 LM 算法优化
+        optimizer.CeresSolver(points_3d_eigen, points_2d_eigen, pose_lm_ceres, 1);
+        lm_ceres_ms += timer.update("Ceres Levenberg-Marquardt");
+        // std::cout << "Pose by Ceres Levenberg-Marquardt: \n" << pose_lm_ceres.matrix() << std::endl;
 
         // // DLT求解PnP问题
         // Sophus::SE3d pose_dlt;
@@ -62,7 +73,9 @@ int main ( int argc, char** argv )
 
     }
 
-    std::cout << "Gauss-Newton total time: " << gn_timer_ms << " ms" << std::endl;
-    std::cout << "Levenberg-Marquardt total time: " << lm_timer_ms << " ms" << std::endl;
-    
+    std::cout << "Gauss-Newton total time: " << gn_ms << " ms\n";
+    std::cout << "Levenberg-Marquardt total time: " << lm_ms << " ms\n";
+    std::cout << "Ceres Gauss-Newton total time: " << gn_ceres_ms << " ms\n";
+    std::cout << "Ceres Levenberg-Marquardt total time: " << lm_ceres_ms << " ms\n";
+
 }

@@ -7,6 +7,9 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIRS})
 
+find_package(Ceres REQUIRED)
+include_directories(${CERES_INCLUDE_DIRS})
+
 find_package(Sophus REQUIRED)
 include_directories(${Sophus_INCLUDE_DIRS})
 
@@ -15,4 +18,4 @@ include_directories(${fmt_INCLUDE_DIRS})
 link_directories(${fmt_LIBRARY_DIRS})
 
 add_executable(ba_pnp main.cpp)
-target_link_libraries(ba_pnp ${OpenCV_LIBS} ${Sophus_LIBRARIES} fmt)
+target_link_libraries(ba_pnp ${OpenCV_LIBS} ${CERES_LIBRARIES} ${Sophus_LIBRARIES} fmt)

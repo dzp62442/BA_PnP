@@ -5,11 +5,46 @@
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
-#include "sophus/se3.hpp"
+#include <sophus/se3.hpp>
+#include <ceres/ceres.h>
 
 typedef std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>> Vecs2d;
 typedef std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> Vecs3d;
 
+
+// 处理SE3变换的自定义局部参数化
+class SE3Parameterization : public ceres::LocalParameterization {
+public:
+    virtual ~SE3Parameterization() {}
+    virtual bool Plus(const double* x,
+                      const double* delta,
+                      double* x_plus_delta) const {
+        Eigen::Map<const Eigen::Vector3d> trans(x + 4);
+        Eigen::Map<const Eigen::Quaterniond> quat(x);
+
+        Eigen::Map<const Eigen::Vector3d> delta_trans(delta + 3);
+        Eigen::Map<const Eigen::Quaterniond> delta_quat(delta);
+
+        Eigen::Map<Eigen::Quaterniond> quat_plus_delta(x_plus_delta);
+        Eigen::Map<Eigen::Vector3d> trans_plus_delta(x_plus_delta + 4);
+
+        quat_plus_delta = (quat * delta_quat).normalized();
+        trans_plus_delta = trans + delta_trans;
+
+        return true;
+    }
+
+    virtual bool ComputeJacobian(const double* x,
+                                 double* jacobian) const {
+        ceres::MatrixRef(jacobian, 7, 6) = ceres::Matrix::Identity(7, 6);
+        return true;
+    }
+
+    virtual int GlobalSize() const { return 7; }
+    virtual int LocalSize() const { return 6; }
+};
+
+// BA 优化求解器
 class BAOptimizer
 {
 public:
@@ -25,6 +60,8 @@ public:
         cy = K(1, 2);
     }
     ~BAOptimizer() {}
+    
+    //! -------------------------------------- 手写求解器 -------------------------------------- //
     
     // 使用DLT求解PnP问题
     void DLT(const Vecs3d &points_3d, const Vecs2d &points_2d, Sophus::SE3d& pose){
@@ -182,4 +219,81 @@ public:
 
     }
 
+    //! -------------------------------------- 基于Ceres的求解器 -------------------------------------- //
+
+    // 定义结构体作为代价函数
+    struct PnPResidual {
+        const Eigen::Vector2d point_2d;
+        const Eigen::Vector3d point_3d;
+        double fx, fy, cx, cy;
+
+        PnPResidual(const Eigen::Vector2d& observed, const Eigen::Vector3d& world, double fx, double fy, double cx, double cy)
+            : point_2d(observed), point_3d(world), fx(fx), fy(fy), cx(cx), cy(cy) {}
+
+        template <typename T>
+        bool operator()(const T* const camera, T* residuals) const {
+            // 提取平移和旋转
+            Eigen::Matrix<T, 3, 1> trans(camera[0], camera[1], camera[2]);
+            Eigen::Quaternion<T> q(camera[6], camera[3], camera[4], camera[5]); // 注意这里的四元数初始化是(w, x, y, z)
+            Eigen::Quaternion<T> rot = q.normalized();
+
+            // 构建 SE3 对象
+            Sophus::SE3<T> pose(rot, trans);
+
+            // 将 3D 点投影到 2D 点
+            Eigen::Matrix<T, 3, 1> pc = pose * point_3d.template cast<T>();  // 该3D点在相机坐标系下的坐标
+            T inv_z = 1.0 / pc[2];  // 1/z
+            T inv_z2 = inv_z * inv_z;  // 1/z^2
+            Eigen::Matrix<T, 2, 1> reproj_2d(fx * pc[0] * inv_z + cx, fy * pc[1] * inv_z + cy);  // 该3D点在图像平面上的投影点
+            
+            // 计算残差
+            residuals[0] = reproj_2d[0] - T(point_2d[0]);
+            residuals[1] = reproj_2d[1] - T(point_2d[1]);
+
+            return true;
+        }
+    };
+
+    // 使用 Ceres 实现两种算法求解 PnP 问题
+    void CeresSolver(const Vecs3d& points_3d, const Vecs2d& points_2d, Sophus::SE3d& pose, const int flag=0){
+        const int num_points = points_3d.size();
+        ceres::Problem problem;  // 创建 ceres 问题
+
+        // 添加残差块
+        for (int i = 0; i < num_points; ++i) {
+            ceres::CostFunction* cost_function =
+                new ceres::AutoDiffCostFunction<PnPResidual, 2, 7>(
+                    new PnPResidual(points_2d[i], points_3d[i], fx, fy, cx, cy));
+
+            ceres::LocalParameterization* se3_parameterization =
+                new SE3Parameterization();
+
+            problem.AddParameterBlock(pose.data(), 7, se3_parameterization);
+            problem.AddResidualBlock(cost_function, nullptr, pose.data());
+        }
+
+
+        // 设置 Ceres 求解器选项
+        ceres::Solver::Options options;
+        options.minimizer_progress_to_stdout = false;
+        options.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
+        options.max_num_iterations = 100;
+        options.function_tolerance = 1e-20;
+        options.gradient_tolerance = 1e-20;
+
+        if (flag == 1){  // flag = 1 使用LM算法
+            options.minimizer_type = ceres::TRUST_REGION; 
+        }
+        else if (flag != 0){  // falg = 0默认使用高斯牛顿法
+            std::cerr << "Ceres solver type error !\n";
+        }
+
+        // 求解 PnP 问题
+        ceres::Solver::Summary summary;
+        ceres::Solve(options, &problem, &summary);
+        std::cout << summary.BriefReport() << "\n";
+    
+    }
+
 };
+
